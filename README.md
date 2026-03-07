@@ -33,6 +33,8 @@ cargo run --release
 2. タスクトレイに YouTube Music のアイコンが表示されます
 3. トレイアイコンをダブルクリックするとウィンドウが復元され、アプリケーションが終了します
 
+実行ファイルは `target/release/MinimizeYTM.exe` から直接実行できます。パスを通しておくと、どのディレクトリからでも `MinimizeYTM.exe` で実行できて便利です。
+
 ## ビルド
 
 ### 開発用ビルド
@@ -50,8 +52,6 @@ cargo build --release
 ```
 
 最適化されたバイナリが `target/release/MinimizeYTM.exe` に生成されます。
-
-実行ファイルは `target/release/MinimizeYTM.exe` から直接実行できます。パスを通しておくと、どのディレクトリからでも `MinimizeYTM.exe` で実行できて便利です。
 
 ## 環境要件
 
