@@ -1,19 +1,21 @@
-use std::sync::atomic::{AtomicIsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 
-static TARGET_HWND: AtomicIsize = AtomicIsize::new(0);
+use crate::icon::load_tray_icon;
+
+static SHOULD_QUIT: AtomicBool = AtomicBool::new(false);
+static CACHED_HWND: AtomicIsize = AtomicIsize::new(0);
 const WM_TRAYICON: u32 = windows_sys::Win32::UI::WindowsAndMessaging::WM_APP + 1;
+const ID_MENU_EXIT: u16 = 1001;
 
-pub fn run_tray_until_double_click(target_hwnd: isize, icon_handle: isize) -> Result<(), String> {
+pub fn run_tray() -> Result<(), String> {
     use windows_sys::Win32::UI::Shell::{
         NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NOTIFYICONDATAW, Shell_NotifyIconW,
     };
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        CreateWindowExW, DispatchMessageW, GWLP_WNDPROC, GetMessageW, IDI_APPLICATION, LoadIconW,
-        MSG, SetWindowLongPtrW, TranslateMessage,
+        CreateWindowExW, DispatchMessageW, GWLP_WNDPROC, GetMessageW, MSG, SetWindowLongPtrW,
+        TranslateMessage,
     };
     use windows_sys::core::w;
-
-    TARGET_HWND.store(target_hwnd, Ordering::SeqCst);
 
     let class_name: *const u16 = w!("STATIC");
     let window_name: *const u16 = w!("MinimizeYTMHiddenWindow");
@@ -49,14 +51,10 @@ pub fn run_tray_until_double_click(target_hwnd: isize, icon_handle: isize) -> Re
     nid.uID = 1;
     nid.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
     nid.uCallbackMessage = WM_TRAYICON;
-    let tray_icon: windows_sys::Win32::UI::WindowsAndMessaging::HICON = if icon_handle != 0 {
-        icon_handle as windows_sys::Win32::UI::WindowsAndMessaging::HICON
-    } else {
-        unsafe { LoadIconW(std::ptr::null_mut(), IDI_APPLICATION) }
-    };
-    nid.hIcon = tray_icon;
 
-    let tip: Vec<u16> = to_wide("Double-click to restore YouTube Music");
+    nid.hIcon = load_tray_icon();
+
+    let tip: Vec<u16> = to_wide("MinimizeYTM - YouTube Music toggler");
     for (index, value) in tip.iter().enumerate().take(nid.szTip.len() - 1) {
         nid.szTip[index] = *value;
     }
@@ -75,7 +73,7 @@ pub fn run_tray_until_double_click(target_hwnd: isize, icon_handle: isize) -> Re
             }
             return Err("GetMessageW failed".to_string());
         }
-        if ret == 0 {
+        if ret == 0 || SHOULD_QUIT.load(Ordering::SeqCst) {
             break;
         }
         unsafe {
@@ -98,26 +96,29 @@ extern "system" fn tray_window_proc(
     lparam: isize,
 ) -> isize {
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        DefWindowProcW, PostQuitMessage, SW_RESTORE, SW_SHOW, ShowWindow, WM_DESTROY,
-        WM_LBUTTONDBLCLK,
+        DefWindowProcW, PostQuitMessage, WM_COMMAND, WM_DESTROY, WM_LBUTTONDBLCLK, WM_RBUTTONUP,
     };
 
-    if msg == WM_TRAYICON && (lparam as u32) == WM_LBUTTONDBLCLK {
-        let target_hwnd_raw: isize = TARGET_HWND.load(Ordering::SeqCst);
-        let target_hwnd: windows_sys::Win32::Foundation::HWND =
-            target_hwnd_raw as windows_sys::Win32::Foundation::HWND;
+    if msg == WM_TRAYICON {
+        let event: u32 = lparam as u32;
 
-        if !target_hwnd.is_null() {
-            unsafe {
-                ShowWindow(target_hwnd, SW_SHOW);
-                ShowWindow(target_hwnd, SW_RESTORE);
-            }
+        if event == WM_LBUTTONDBLCLK {
+            toggle_youtube_music_window();
+            return 0;
         }
 
-        unsafe {
-            PostQuitMessage(0);
+        if event == WM_RBUTTONUP {
+            show_context_menu(hwnd);
+            return 0;
         }
-        return 0;
+    }
+
+    if msg == WM_COMMAND {
+        let command_id: u16 = (wparam & 0xFFFF) as u16;
+        if command_id == ID_MENU_EXIT {
+            handle_exit_command();
+            return 0;
+        }
     }
 
     if msg == WM_DESTROY {
@@ -128,6 +129,101 @@ extern "system" fn tray_window_proc(
     }
 
     unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
+}
+
+fn toggle_youtube_music_window() {
+    let Some(hwnd) = resolve_target_hwnd() else {
+        return;
+    };
+
+    toggle_window_visibility(hwnd);
+    CACHED_HWND.store(hwnd, Ordering::SeqCst);
+}
+
+fn handle_exit_command() {
+    use crate::window::{is_window_valid, show_window};
+    use windows_sys::Win32::UI::WindowsAndMessaging::PostQuitMessage;
+
+    let cached_hwnd: isize = CACHED_HWND.load(Ordering::SeqCst);
+    if is_window_valid(cached_hwnd) {
+        show_window(cached_hwnd);
+    }
+
+    SHOULD_QUIT.store(true, Ordering::SeqCst);
+    unsafe {
+        PostQuitMessage(0);
+    }
+}
+
+fn resolve_target_hwnd() -> Option<isize> {
+    use crate::window::{WindowInfo, get_youtube_music_windows, is_window_valid};
+
+    // まずはキャッシュを使い、使えないときだけ再検索する。
+    let cached_hwnd: isize = CACHED_HWND.load(Ordering::SeqCst);
+    if cached_hwnd != 0 && is_window_valid(cached_hwnd) {
+        println!("キャッシュされたウィンドウを使用します。");
+        return Some(cached_hwnd);
+    }
+
+    println!("YouTube Music ウィンドウを検索します...");
+    let windows: Vec<WindowInfo> = get_youtube_music_windows();
+    if windows.is_empty() {
+        println!("YouTube Music のウィンドウが見つかりませんでした。");
+        CACHED_HWND.store(0, Ordering::SeqCst);
+        return None;
+    }
+
+    let target_window: &WindowInfo = &windows[0];
+    println!(
+        "対象ウィンドウ: {} - {}",
+        target_window.process_name, target_window.title
+    );
+    Some(target_window.hwnd)
+}
+
+fn toggle_window_visibility(hwnd: isize) {
+    use crate::window::{hide_window, is_window_visible, show_window};
+
+    if is_window_visible(hwnd) {
+        println!("YouTube Music を非表示にします。");
+        hide_window(hwnd);
+    } else {
+        println!("YouTube Music を表示します。");
+        show_window(hwnd);
+    }
+}
+
+fn show_context_menu(hwnd: windows_sys::Win32::Foundation::HWND) {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        AppendMenuW, CreatePopupMenu, DestroyMenu, GetCursorPos, MF_STRING, SetForegroundWindow,
+        TPM_BOTTOMALIGN, TPM_LEFTALIGN, TrackPopupMenu,
+    };
+
+    let hmenu: windows_sys::Win32::UI::WindowsAndMessaging::HMENU = unsafe { CreatePopupMenu() };
+    if hmenu.is_null() {
+        return;
+    }
+
+    let exit_text: Vec<u16> = to_wide("終了(&X)");
+    unsafe {
+        AppendMenuW(hmenu, MF_STRING, ID_MENU_EXIT as usize, exit_text.as_ptr());
+    }
+
+    let mut cursor_pos: windows_sys::Win32::Foundation::POINT = unsafe { std::mem::zeroed() };
+    unsafe {
+        GetCursorPos(&mut cursor_pos);
+        SetForegroundWindow(hwnd);
+        TrackPopupMenu(
+            hmenu,
+            TPM_BOTTOMALIGN | TPM_LEFTALIGN,
+            cursor_pos.x,
+            cursor_pos.y,
+            0,
+            hwnd,
+            std::ptr::null(),
+        );
+        DestroyMenu(hmenu);
+    }
 }
 
 fn to_wide(text: &str) -> Vec<u16> {

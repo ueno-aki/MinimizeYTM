@@ -2,7 +2,6 @@
 pub struct WindowInfo {
     pub hwnd: isize,
     pub title: String,
-    pub process_id: u32,
     pub process_name: String,
 }
 
@@ -22,38 +21,6 @@ pub fn get_youtube_music_windows() -> Vec<WindowInfo> {
         .into_iter()
         .filter(|w| w.process_name == "chrome.exe" && pattern.is_match(&w.title))
         .collect()
-}
-
-pub fn get_window_icon(hwnd: isize) -> isize {
-    use windows_sys::Win32::UI::WindowsAndMessaging::{
-        GCLP_HICON, GCLP_HICONSM, GetClassLongPtrW, ICON_BIG, ICON_SMALL2, SendMessageW, WM_GETICON,
-    };
-
-    let target_hwnd: windows_sys::Win32::Foundation::HWND =
-        hwnd as windows_sys::Win32::Foundation::HWND;
-
-    let icon_small2: isize =
-        unsafe { SendMessageW(target_hwnd, WM_GETICON, ICON_SMALL2 as usize, 0) };
-    if icon_small2 != 0 {
-        return icon_small2;
-    }
-
-    let icon_big: isize = unsafe { SendMessageW(target_hwnd, WM_GETICON, ICON_BIG as usize, 0) };
-    if icon_big != 0 {
-        return icon_big;
-    }
-
-    let class_icon_small: usize = unsafe { GetClassLongPtrW(target_hwnd, GCLP_HICONSM) };
-    if class_icon_small != 0 {
-        return class_icon_small as isize;
-    }
-
-    let class_icon_big: usize = unsafe { GetClassLongPtrW(target_hwnd, GCLP_HICON) };
-    if class_icon_big != 0 {
-        return class_icon_big as isize;
-    }
-
-    0
 }
 
 fn get_open_windows() -> Vec<WindowInfo> {
@@ -116,7 +83,6 @@ unsafe extern "system" fn enum_windows_proc(
     let window_info: WindowInfo = WindowInfo {
         hwnd: hwnd as isize,
         title,
-        process_id,
         process_name,
     };
 
@@ -184,8 +150,26 @@ pub fn hide_window(hwnd: isize) -> bool {
 }
 
 pub fn show_window(hwnd: isize) -> bool {
-    use windows_sys::Win32::UI::WindowsAndMessaging::{SW_SHOW, ShowWindow};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{SW_RESTORE, SW_SHOW, ShowWindow};
 
-    unsafe { ShowWindow(hwnd as windows_sys::Win32::Foundation::HWND, SW_SHOW) };
+    unsafe {
+        ShowWindow(hwnd as windows_sys::Win32::Foundation::HWND, SW_SHOW);
+        ShowWindow(hwnd as windows_sys::Win32::Foundation::HWND, SW_RESTORE);
+    };
     true
+}
+
+pub fn is_window_visible(hwnd: isize) -> bool {
+    use windows_sys::Win32::UI::WindowsAndMessaging::IsWindowVisible;
+
+    unsafe { IsWindowVisible(hwnd as windows_sys::Win32::Foundation::HWND) != 0 }
+}
+
+pub fn is_window_valid(hwnd: isize) -> bool {
+    use windows_sys::Win32::UI::WindowsAndMessaging::IsWindow;
+
+    if hwnd == 0 {
+        return false;
+    }
+    unsafe { IsWindow(hwnd as windows_sys::Win32::Foundation::HWND) != 0 }
 }
