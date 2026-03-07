@@ -4,7 +4,7 @@ YouTube Music を最小化してタスクトレイに常駐させるシンプル
 
 ## 概要
 
-MinimizeYTM は Windows のタスクトレイに常駐し、YouTube Music のウィンドウを最小化・復元できるツールです。Rust で開発されており、軽量で高速に動作します。
+MinimizeYTM は YouTube Music のウィンドウを最小化・復元できるツールです。Rust で開発されており、軽量で高速に動作します。
 
 ## 機能
 
