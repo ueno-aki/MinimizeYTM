@@ -10,8 +10,8 @@ pub fn get_youtube_music_windows() -> Vec<WindowInfo> {
 
     // 既知のタイトル形式を許容:
     // 1) YouTube Music
-    // 2) YouTube Music - $曲名 | YouTube Music
-    // 3) YouTube Music - $曲名 - $洋名 | YouTube Music
+    // 2) YouTube Music - $Title | YouTube Music
+    // 3) YouTube Music - $Title - $SubTitle | YouTube Music
     let pattern: Regex = Regex::new(
         r"^(YouTube Music|YouTube Music - .+ \| YouTube Music|YouTube Music - .+ - .+ \| YouTube Music)$",
     )
