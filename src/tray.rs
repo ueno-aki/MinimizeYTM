@@ -6,11 +6,13 @@ static SHOULD_QUIT: AtomicBool = AtomicBool::new(false);
 static CACHED_HWND: AtomicIsize = AtomicIsize::new(0);
 const WM_TRAYICON: u32 = windows_sys::Win32::UI::WindowsAndMessaging::WM_APP + 1;
 const ID_MENU_EXIT: u16 = 1001;
+const ID_HOTKEY_TOGGLE: i32 = 1;
 
 pub fn run_tray() -> Result<(), String> {
     use windows_sys::Win32::UI::Shell::{
         NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NOTIFYICONDATAW, Shell_NotifyIconW,
     };
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{MOD_WIN, RegisterHotKey, UnregisterHotKey};
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         CreateWindowExW, DispatchMessageW, GWLP_WNDPROC, GetMessageW, MSG, SetWindowLongPtrW,
         TranslateMessage,
@@ -64,10 +66,23 @@ pub fn run_tray() -> Result<(), String> {
         return Err("Shell_NotifyIconW(NIM_ADD) failed".to_string());
     }
 
+    // Win + Y をグローバルホットキーとして登録する。
+    // Win キーとの組み合わせは OS 側で予約されている場合があり、失敗してもトレイ動作は継続する。
+    let hotkey_registered: bool =
+        unsafe { RegisterHotKey(hwnd, ID_HOTKEY_TOGGLE, MOD_WIN, b'Y' as u32) != 0 };
+    if !hotkey_registered {
+        println!("Win + Y のホットキー登録に失敗しました。トレイ操作は引き続き利用できます。");
+    }
+
     let mut msg: MSG = unsafe { std::mem::zeroed() };
     loop {
         let ret: i32 = unsafe { GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0) };
         if ret == -1 {
+            if hotkey_registered {
+                unsafe {
+                    UnregisterHotKey(hwnd, ID_HOTKEY_TOGGLE);
+                }
+            }
             unsafe {
                 Shell_NotifyIconW(NIM_DELETE, &nid);
             }
@@ -79,6 +94,12 @@ pub fn run_tray() -> Result<(), String> {
         unsafe {
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
+        }
+    }
+
+    if hotkey_registered {
+        unsafe {
+            UnregisterHotKey(hwnd, ID_HOTKEY_TOGGLE);
         }
     }
 
@@ -96,7 +117,8 @@ extern "system" fn tray_window_proc(
     lparam: isize,
 ) -> isize {
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        DefWindowProcW, PostQuitMessage, WM_COMMAND, WM_DESTROY, WM_LBUTTONDBLCLK, WM_RBUTTONUP,
+        DefWindowProcW, PostQuitMessage, WM_COMMAND, WM_DESTROY, WM_HOTKEY, WM_LBUTTONDBLCLK,
+        WM_RBUTTONUP,
     };
 
     if msg == WM_TRAYICON {
@@ -119,6 +141,11 @@ extern "system" fn tray_window_proc(
             handle_exit_command();
             return 0;
         }
+    }
+
+    if msg == WM_HOTKEY && wparam == ID_HOTKEY_TOGGLE as usize {
+        toggle_youtube_music_window();
+        return 0;
     }
 
     if msg == WM_DESTROY {
