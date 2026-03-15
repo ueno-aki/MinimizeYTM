@@ -1,28 +1,17 @@
-pub fn load_tray_icon() -> windows_sys::Win32::UI::WindowsAndMessaging::HICON {
-    use windows_sys::Win32::UI::WindowsAndMessaging::{
-        CreateIconFromResourceEx, IDI_APPLICATION, LoadIconW,
+pub fn load_tray_icon()
+-> Result<windows::Win32::UI::WindowsAndMessaging::HICON, windows::core::Error> {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        CreateIconFromResourceEx, IDI_APPLICATION, IMAGE_FLAGS, LoadIconW,
     };
 
     const ICON_BYTES: &[u8] = include_bytes!("../assets/icon.ico");
 
-    if let Some(icon_image) = first_ico_image(ICON_BYTES) {
-        let created: windows_sys::Win32::UI::WindowsAndMessaging::HICON = unsafe {
-            CreateIconFromResourceEx(
-                icon_image.as_ptr() as *mut u8,
-                icon_image.len() as u32,
-                1,
-                0x0003_0000,
-                0,
-                0,
-                0,
-            ) as windows_sys::Win32::UI::WindowsAndMessaging::HICON
-        };
-        if !created.is_null() {
-            return created;
-        }
+    match first_ico_image(ICON_BYTES) {
+        Some(icon_image) => unsafe {
+            CreateIconFromResourceEx(icon_image, true, 0x0003_0000, 0, 0, IMAGE_FLAGS(0))
+        },
+        None => unsafe { LoadIconW(None, IDI_APPLICATION) },
     }
-
-    unsafe { LoadIconW(std::ptr::null_mut(), IDI_APPLICATION) }
 }
 
 fn first_ico_image(bytes: &[u8]) -> Option<&[u8]> {
